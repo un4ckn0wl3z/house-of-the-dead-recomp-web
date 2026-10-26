@@ -9,6 +9,24 @@ analysis in `build/`, the packaged web data in `build_web/`) is produced locally
 copy** and is ignored by git. Research and educational use only; bring your own legally obtained copy and do not
 redistribute builds — they contain the game's data.
 
+## Screenshots
+
+Captured from the recompiled game (the original software renderer, 640×480).
+
+| | |
+|---|---|
+| ![Title screen](docs/screenshots/title.png) | ![Main menu, the hand follows the mouse](docs/screenshots/menu.png) |
+| Title screen | Main menu: the hand follows the mouse |
+| ![Two players in stage 1](docs/screenshots/coop-2p.png) | ![Shooting a zombie](docs/screenshots/shooting.png) |
+| Two-player co-op: 1P and 2P HUDs | Stage 1 gameplay |
+
+In the browser: the start screen (solo, sign in / register with the server's captcha, the open games list) and
+P2's crosshair as P1 sees it during an online game.
+
+| | |
+|---|---|
+| ![Web start screen](docs/screenshots/web-start.png) | ![Partner crosshair online](docs/screenshots/web-coop-crosshair.png) |
+
 ## Quick start
 
 You need Python 3.9+, git, and (for online co-op and accounts) Node.js 22.13+ (it uses the built-in
@@ -57,7 +75,7 @@ automatic, but `recomp_config.json` names a few addresses of the tested builds.
   state checksum every second.
 - Friends join **your** server, so they load the build from you: keep it private (`--password`) and only share
   it with people who own the game. For play over the internet, put the server behind HTTPS (a tunnel or a small
-  VPS with Caddy) � the page then uses `wss://` automatically.
+  VPS with Caddy) — the page then uses `wss://` automatically.
 
 ### Accounts
 
