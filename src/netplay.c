@@ -121,6 +121,12 @@ void net_cow_end(void) {
 
 // ---------------------------------------------------------------- host side
 static NetInput latest[NET_MAX_PLAYERS];   // each guest's latest input; chr/key stay until sent once
+// Several guest messages can arrive between two host frames: a quick click (press, then release) would be
+// overwritten by the release and lost. Button bits (NET_LATCH: trigger and reload in gun_input.c) are kept,
+// with the aim at the press, until a bundle has carried them.
+#define NET_LATCH 3u
+static uint32_t latched[NET_MAX_PLAYERS];
+static float latched_x[NET_MAX_PLAYERS], latched_y[NET_MAX_PLAYERS];
 static NetEvent pending_ev[16];
 static int npending_ev;
 static NetEvent *queue_event(int type, int slot, const char *name) {
@@ -188,6 +194,11 @@ void net_after_pump(void) {
             if (port_bot_input(s, &bot)) { latest[s].flags = bot.flags; latest[s].wx = bot.wx; latest[s].wy = bot.wy; }
             net_stack_restore();
             b.guest[s - 1] = latest[s];
+            if (latched[s]) {           // a press since the last bundle: this frame shows it, where it happened
+                b.guest[s - 1].flags |= latched[s];
+                if (!(latest[s].flags & latched[s])) { b.guest[s - 1].wx = latched_x[s]; b.guest[s - 1].wy = latched_y[s]; }
+                latched[s] = 0;
+            }
             latest[s].chr = latest[s].key = 0;
         }
         while (npending_ev > 0 && b.nev < 4) {
@@ -223,6 +234,8 @@ NET_EXPORT void net_host_leave(int slot) { if (slot > 0 && slot < NET_MAX_PLAYER
 NET_EXPORT void net_host_input(int slot, int flags, float wx, float wy, int chr, int key) {
     if (slot <= 0 || slot >= NET_MAX_PLAYERS) return;
     NetInput *g = &latest[slot];
+    uint32_t pressed = (uint32_t)flags & NET_LATCH & ~latched[slot];
+    if (pressed) { latched[slot] |= pressed; latched_x[slot] = wx; latched_y[slot] = wy; }
     g->flags = (uint32_t)flags; g->wx = wx; g->wy = wy;
     if (key) { g->key = (uint8_t)key; g->chr = (uint8_t)chr; }
 }

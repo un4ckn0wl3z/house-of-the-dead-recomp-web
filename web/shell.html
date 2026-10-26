@@ -7,9 +7,12 @@
 <style>
   html, body { margin: 0; height: 100%; background: #000; color: #ddd; font: 15px/1.45 system-ui, sans-serif; overflow: hidden; }
   #stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
-  /* the player's aim: a crosshair pointer drawn by the browser (no lag); the partner's is drawn in the game */
+  /* the player's aim: a crosshair pointer drawn by the browser (no lag); the partner's is drawn in the game.
+     !important: SDL writes an inline cursor style (default / none) on the canvas when the mouse enters it */
   canvas { display: block; background: #000; outline: none;
-           cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cg stroke-linecap='round'%3E%3Cpath d='M16 3v9M16 20v9M3 16h9M20 16h9' stroke='%23000' stroke-width='4'/%3E%3Cpath d='M16 3v9M16 20v9M3 16h9M20 16h9' stroke='%23ff3030' stroke-width='2'/%3E%3Ccircle cx='16' cy='16' r='1.6' fill='%23ff3030'/%3E%3C/g%3E%3C/svg%3E") 16 16, crosshair; }
+           cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cg stroke-linecap='round'%3E%3Cpath d='M16 3v9M16 20v9M3 16h9M20 16h9' stroke='%23000' stroke-width='4'/%3E%3Cpath d='M16 3v9M16 20v9M3 16h9M20 16h9' stroke='%23ff3030' stroke-width='2'/%3E%3Ccircle cx='16' cy='16' r='1.6' fill='%23ff3030'/%3E%3C/g%3E%3C/svg%3E") 16 16, crosshair !important; }
+  /* P2's shot flash (instant feedback while the shot travels to P1's game) */
+  canvas.fire { cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Ccircle cx='16' cy='16' r='9' fill='%23ffd23a' fill-opacity='.55' stroke='%23000' stroke-width='2'/%3E%3Cpath d='M16 3v9M16 20v9M3 16h9M20 16h9' stroke='%23fff' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E") 16 16, crosshair !important; }
   #overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
              gap: 14px; background: radial-gradient(circle at 50% 40%, #2a0606, #000 70%); text-align: center; padding: 16px;
              overflow-y: auto; box-sizing: border-box; }
@@ -501,13 +504,27 @@
       over = 1;
     });
     canvas.addEventListener('mouseleave', function () { over = 0; });
-    canvas.addEventListener('mousedown', function (e) { var b = e.button === 2 ? 2 : 1; held |= b; clicked |= b; });
-    addEventListener('mouseup', function (e) { held &= e.button === 2 ? ~2 : ~1; });
-    addEventListener('blur', function () { held = 0; });
-    setInterval(function () {
+    function sendInput() {
       var b = held | clicked; clicked = 0;     // a click shorter than the send interval still fires once
       send({ t: 'input', f: (b & 3) | (over ? 4 : 0), x: Math.round(mx), y: Math.round(my), c: 0, k: 0 });
-    }, 1000 / 60);
+    }
+    // presses and releases go out at once (not at the next 60 Hz tick): the shot reaches P1's next frame sooner
+    canvas.addEventListener('mousedown', function (e) {
+      var r = canvas.getBoundingClientRect();
+      mx = (e.clientX - r.left) * (canvas.width || 640) / r.width;
+      my = (e.clientY - r.top) * (canvas.height || 480) / r.height;
+      var b = e.button === 2 ? 2 : 1; held |= b; clicked |= b; over = 1;
+      sendInput();
+      flash();
+    });
+    addEventListener('mouseup', function (e) { held &= e.button === 2 ? ~2 : ~1; sendInput(); });
+    addEventListener('blur', function () { held = 0; });
+    setInterval(sendInput, 1000 / 60);
+  }
+  // Instant local feedback for P2's shot: the shot itself counts once P1's game runs it (a network round trip)
+  function flash() {
+    canvas.classList.add('fire');
+    clearTimeout(flash.t); flash.t = setTimeout(function () { canvas.classList.remove('fire'); }, 90);
   }
   Module.onNetStatus = function (queued, frame) {
     guest.behind = queued;
