@@ -61,6 +61,10 @@ static inline void W8(uint32_t a, uint32_t v) { CHK(a, 1); COW(a, 1); G[a] = (ui
 static inline void W16(uint32_t a, uint32_t v) { CHK(a, 2); COW(a, 2); uint16_t x = (uint16_t)v; memcpy(G + a, &x, 2); }
 static inline void W32(uint32_t a, uint32_t v) { CHK(a, 4); COW(a, 4); memcpy(G + a, &v, 4); }
 static inline void W64(uint32_t a, uint64_t v) { CHK(a, 8); COW(a, 8); memcpy(G + a, &v, 8); }
+// x87 precision control (FCW bits 8-9): with 00 (24-bit) the FPU rounds every arithmetic result to single
+// precision. Games switch to it for speed around their rasterisers (House of the Dead: span setup), and their edge
+// and texture-gradient maths is tuned to it; computing those in double draws different pixels. 53/64-bit -> double.
+static inline double PREC(double x) { return (FCW & 0x300u) ? x : (double)(float)x; }
 static inline double F32(uint32_t a) { CHK(a, 4); float f; memcpy(&f, G + a, 4); return f; }
 static inline double F64(uint32_t a) { CHK(a, 8); double d; memcpy(&d, G + a, 8); return d; }
 static inline void WF32(uint32_t a, double v) { CHK(a, 4); COW(a, 4); float f = (float)v; memcpy(G + a, &f, 4); }

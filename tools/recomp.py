@@ -1041,13 +1041,14 @@ class Gen:
         A = addr_expr(ins, memop) if memop is not None else None
         N = lambda L: ((lambda live: L), frozenset(), frozenset(), 'normal')
         arith = ['+', '*', 'com', 'comp', '-', 'r-', '/', 'r/']
+        # PREC(): the result rounded as the guest's precision control asks (24-bit -> float), recomp.h
         def ar(dst, src, k, pop=False):
-            if k == '+': s = '%s = %s + %s;' % (dst, dst, src)
-            elif k == '*': s = '%s = %s * %s;' % (dst, dst, src)
-            elif k == '-': s = '%s = %s - %s;' % (dst, dst, src)
-            elif k == 'r-': s = '%s = %s - %s;' % (dst, src, dst)
-            elif k == '/': s = '%s = %s / %s;' % (dst, dst, src)
-            elif k == 'r/': s = '%s = %s / %s;' % (dst, src, dst)
+            if k == '+': s = '%s = PREC(%s + %s);' % (dst, dst, src)
+            elif k == '*': s = '%s = PREC(%s * %s);' % (dst, dst, src)
+            elif k == '-': s = '%s = PREC(%s - %s);' % (dst, dst, src)
+            elif k == 'r-': s = '%s = PREC(%s - %s);' % (dst, src, dst)
+            elif k == '/': s = '%s = PREC(%s / %s);' % (dst, dst, src)
+            elif k == 'r/': s = '%s = PREC(%s / %s);' % (dst, src, dst)
             return s
         if mod != 3:
             if op in (0xd8, 0xdc, 0xda, 0xde):
@@ -1119,7 +1120,7 @@ class Gen:
                    0xf4: ['fpu_xtract();'],
                    0xf5: ['fpu_prem(1);'], 0xf6: ['FTOP = (FTOP - 1) & 7;'], 0xf7: ['FTOP = (FTOP + 1) & 7;'],
                    0xf8: ['fpu_prem(0);'], 0xf9: ['STI(1) = STI(1) * log2(ST0 + 1.0); FPOP();'],
-                   0xfa: ['ST0 = sqrt(ST0);'], 0xfb: ['{ double v = ST0; ST0 = sin(v); FPUSH(cos(v)); FSW_CC &= ~0x400; }'],
+                   0xfa: ['ST0 = PREC(sqrt(ST0));'], 0xfb: ['{ double v = ST0; ST0 = sin(v); FPUSH(cos(v)); FSW_CC &= ~0x400; }'],
                    0xfc: ['ST0 = fpu_round(ST0);'], 0xfd: ['ST0 = ldexp(ST0, (int)trunc(STI(1)));'],
                    0xfe: ['ST0 = sin(ST0); FSW_CC &= ~0x400;'], 0xff: ['ST0 = cos(ST0); FSW_CC &= ~0x400;']}
             if modrm in tbl: return N(tbl[modrm])
