@@ -1,5 +1,9 @@
 # The House of the Dead (PC, 1998) — web port
 
+[![Join the Discord](https://img.shields.io/badge/Discord-join%20the%20server-5865F2?logo=discord&logoColor=white)](https://discord.gg/WbxMgtMEaz)
+
+Questions, co-op partners, bug reports: **[join the Discord](https://discord.gg/WbxMgtMEaz)**.
+
 A static recompilation of Sega's 1998 Windows port of *The House of the Dead* to portable C, with the Win32 /
 DirectX layer replaced by SDL2. It builds a native SDL2 executable and a WebAssembly build that runs in a
 browser tab, including two-player co-op over the network.
