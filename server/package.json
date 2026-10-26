@@ -1,0 +1,9 @@
+{
+  "name": "hotd-web-port-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Serves the House of the Dead web port and relays online co-op rooms (research use only)",
+  "main": "server.js",
+  "engines": { "node": ">=18" },
+  "scripts": { "start": "node server.js" }
+}

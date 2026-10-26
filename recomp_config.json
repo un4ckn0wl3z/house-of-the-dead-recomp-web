@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "0x563614": [
+      "host_frame_loop",
+      "0x563626"
+    ]
+  },
+  "hle": {
+    "0x5796f4": "hle_setjmp_wc",
+    "0x579733": "hle_longjmp_wc",
+    "0x4182e4": "hle_game_log"
+  },
+  "entries": [
+    "0x579733"
+  ]
+}

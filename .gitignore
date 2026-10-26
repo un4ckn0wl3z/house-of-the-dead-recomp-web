@@ -1,0 +1,19 @@
+# Everything derived from the game stays local: never commit these.
+gen/
+build/
+build_web/
+game/
+*.exe
+*.EXE
+*.dll
+*.json.problems.txt
+port.log
+shot_*.bmp
+shot_*.png
+*.rec
+# toolchains fetched by port.py
+.emsdk/
+thirdparty/
+server/node_modules/
+server/data/
+__pycache__/

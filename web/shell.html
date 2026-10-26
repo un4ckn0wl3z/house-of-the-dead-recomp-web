@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The House of the Dead</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #ddd; font: 15px/1.45 system-ui, sans-serif; overflow: hidden; }
+  #stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+  /* the player's aim: a crosshair pointer drawn by the browser (no lag); the partner's is drawn in the game */
+  canvas { display: block; background: #000; outline: none;
+           cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cg stroke-linecap='round'%3E%3Cpath d='M16 3v9M16 20v9M3 16h9M20 16h9' stroke='%23000' stroke-width='4'/%3E%3Cpath d='M16 3v9M16 20v9M3 16h9M20 16h9' stroke='%23ff3030' stroke-width='2'/%3E%3Ccircle cx='16' cy='16' r='1.6' fill='%23ff3030'/%3E%3C/g%3E%3C/svg%3E") 16 16, crosshair; }
+  #overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+             gap: 14px; background: radial-gradient(circle at 50% 40%, #2a0606, #000 70%); text-align: center; padding: 16px;
+             overflow-y: auto; box-sizing: border-box; }
+  h1 { margin: 0; color: #d22; font: 700 40px/1.1 Georgia, serif; letter-spacing: 2px; text-shadow: 0 2px 0 #400; }
+  #bar { width: min(420px, 90vw); height: 6px; background: #300; border-radius: 3px; overflow: hidden; }
+  #bar > div { height: 100%; width: 0; background: #d22; transition: width .2s; }
+  #status { min-height: 1.4em; color: #bbb; }
+  #menu { display: none; flex-direction: column; gap: 10px; width: min(320px, 90vw); }
+  button { font: 600 16px system-ui, sans-serif; padding: 10px 14px; border-radius: 6px; border: 1px solid #a11; background: #6a0808;
+           color: #fff; cursor: pointer; }
+  button:hover { background: #8a0c0c; }
+  button.alt { background: transparent; }
+  .row { display: flex; gap: 8px; }
+  input { flex: 1; min-width: 0; font: 600 18px ui-monospace, monospace; text-transform: uppercase; letter-spacing: 4px; padding: 8px 10px;
+          border-radius: 6px; border: 1px solid #733; background: #120404; color: #fff; text-align: center; }
+  #help { max-width: 460px; color: #888; font-size: 13px; }
+  input.name { flex: none; width: 100%; box-sizing: border-box; letter-spacing: 0; text-transform: none; font: 500 15px system-ui, sans-serif;
+               text-align: left; margin-bottom: 6px; }
+  #acct { border: 1px solid #511; border-radius: 6px; padding: 8px 10px; background: rgba(20,4,4,.8); text-align: left; font-size: 14px; }
+  #acct a { color: #f88; }
+  #acct .tabs { margin-bottom: 6px; } #acct .tabs a { text-decoration: none; color: #999; } #acct .tabs a.on { color: #f66; font-weight: 600; }
+  #acct .hint { color: #777; font-size: 12px; }
+  #acct button { width: 100%; }
+  #capimg svg { display: block; border-radius: 4px; }
+  #capbox .row { align-items: center; margin-bottom: 6px; } #capnew { font-size: 22px; text-decoration: none; }
+  .err { color: #fc6; font-size: 13px; min-height: 1em; margin-top: 4px; }
+  #browser { border: 1px solid #511; border-radius: 6px; background: rgba(20,4,4,.8); text-align: left; }
+  #browser .head { padding: 6px 10px; border-bottom: 1px solid #411; color: #f88; font-weight: 600; font-size: 13px; }
+  #rooms { max-height: 200px; overflow-y: auto; }
+  .room { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid #2a0808; }
+  .room:last-child { border-bottom: 0; }
+  .room .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .room .meta { color: #999; font-size: 12px; }
+  .room button { padding: 4px 12px; font-size: 13px; }
+  .room button:disabled { opacity: .4; cursor: default; }
+  .empty { padding: 10px; color: #888; font-size: 13px; }
+  #net { position: fixed; top: 8px; left: 8px; padding: 6px 10px; background: rgba(0,0,0,.7); border: 1px solid #511; border-radius: 6px;
+         font-size: 13px; display: none; z-index: 2; }
+  #net b { color: #f66; letter-spacing: 2px; }
+  #net button { font-size: 13px; padding: 4px 10px; margin-top: 6px; }
+  #tools { position: fixed; right: 8px; bottom: 8px; opacity: .35; z-index: 2; }
+  #tools:hover { opacity: 1; }
+  #tools button { font-size: 12px; padding: 4px 8px; }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas></div>
+<div id="overlay">
+  <h1>THE HOUSE OF THE DEAD</h1>
+  <div id="bar"><div></div></div>
+  <div id="status">Loading…</div>
+  <div id="menu">
+    <div id="acct">
+      <div id="signedin" style="display:none">Signed in as <b id="uname"></b> · <a href="#" id="logout">sign out</a></div>
+      <form id="auth" autocomplete="on">
+        <div class="tabs"><a href="#" id="tab-login" class="on">Sign in</a> · <a href="#" id="tab-reg">Register</a> <span class="hint">for online co-op</span></div>
+        <input id="user" class="name" maxlength="16" placeholder="User name" autocomplete="username">
+        <input id="pass" class="name" type="password" maxlength="200" placeholder="Password" autocomplete="current-password">
+        <div id="capbox" style="display:none">
+          <div class="row"><span id="capimg"></span><a href="#" id="capnew" title="New code">↻</a></div>
+          <input id="capans" class="name" maxlength="8" placeholder="Type the code above" autocomplete="off">
+        </div>
+        <button id="authgo" type="submit">Sign in</button>
+        <div id="autherr" class="err"></div>
+      </form>
+    </div>
+    <button id="solo">Play solo</button>
+    <button id="host" class="alt">Host co-op (you are P1)</button>
+    <div id="browser">
+      <div class="head">Open games <span id="rcount"></span></div>
+      <div id="rooms"><div class="empty">Looking for games…</div></div>
+    </div>
+    <div class="row"><input id="code" maxlength="4" placeholder="CODE" autocomplete="off"><button id="join" class="alt">Join by code</button></div>
+  </div>
+  <div id="help">Aim with the mouse. Left button fires, right button reloads (it shoots off screen, as on the arcade
+    cabinet). Space skips scenes. Scores and settings are kept in this browser.</div>
+</div>
+<div id="net"></div>
+<div id="tools"><button id="fs">Fullscreen</button></div>
+<script>
+(function () {   // own scope: index.js defines globals such as run()
+  var canvas = document.getElementById('canvas'), overlay = document.getElementById('overlay');
+  var statusEl = document.getElementById('status'), barEl = document.querySelector('#bar > div');
+  var menu = document.getElementById('menu'), panel = document.getElementById('net'), codeEl = document.getElementById('code');
+  var params = new URLSearchParams(location.search);
+  if (params.get('join')) codeEl.value = params.get('join').toUpperCase();
+  var ready = false, mode = 'solo';
+
+  function fit() {
+    var w = canvas.width || 640, h = canvas.height || 480, s = Math.min(innerWidth / w, innerHeight / h);
+    canvas.style.width = Math.floor(w * s) + 'px'; canvas.style.height = Math.floor(h * s) + 'px';
+  }
+  addEventListener('resize', fit);
+  new MutationObserver(fit).observe(canvas, { attributes: true, attributeFilter: ['width', 'height'] });
+
+  var Module = window.Module = {
+    canvas: canvas, noInitialRun: true,
+    netGuest: !!params.get('join'),     // web/prejs.js: a guest's /save stays in memory
+    print: function (t) { console.log(t); }, printErr: function (t) { console.warn(t); },
+    setStatus: function (t) {
+      var m = t.match(/\((\d+(\.\d+)?)\/(\d+)\)/);
+      if (m) barEl.style.width = (100 * m[1] / m[3]).toFixed(1) + '%';
+      statusEl.textContent = t.replace(/\(.*\)/, '').trim() || statusEl.textContent;
+    },
+    onRuntimeInitialized: function () {
+      barEl.style.width = '100%'; ready = true;
+      statusEl.textContent = 'Ready.';
+      menu.style.display = 'flex';
+      if (params.get('join') && token) document.getElementById('join').click();
+    },
+    onGameExit: function () { show('Game closed. Reload the page to play again.'); },
+    onAbort: function (what) { show('The game stopped: ' + what + ' (see the browser console).'); }
+  };
+  function show(msg) { overlay.style.display = 'flex'; menu.style.display = 'none'; statusEl.textContent = msg; }
+  function run() {
+    overlay.style.display = 'none';
+    Module.callMain([]);
+    canvas.focus(); fit();
+  }
+  document.getElementById('solo').onclick = function () { if (ready) { browsing = false; run(); } };
+  document.getElementById('fs').onclick = function () { var s = document.getElementById('stage'); (s.requestFullscreen || function () {}).call(s); };
+  addEventListener('keydown', function (e) {
+    if (['Tab', 'F1', 'F5', 'Backspace', ' '].indexOf(e.key) >= 0 && document.activeElement === canvas) e.preventDefault();
+  });
+
+  // ---------------------------------------------------------------- server browser
+  // ---------------------------------------------------------------- account (server/server.js: SQLite + captcha)
+  var store = { get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+                set: function (k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) {} } };
+  var token = store.get('hotd_token'), username = store.get('hotd_user'), registering = false, capId = '';
+  function playerName() { return username || 'Player'; }
+  function $(id) { return document.getElementById(id); }
+  function showAccount() {
+    $('signedin').style.display = token ? 'block' : 'none';
+    $('auth').style.display = token ? 'none' : 'block';
+    $('uname').textContent = username || '';
+  }
+  function api(path, body) {
+    return fetch(path, { method: body ? 'POST' : 'GET', headers: Object.assign({ 'Content-Type': 'application/json' }, token ? { 'X-Token': token } : {}),
+                         body: body ? JSON.stringify(body) : undefined })
+      .then(function (r) { return r.json().then(function (d) { if (!r.ok) { var e = new Error(d.error || r.status); e.data = d; throw e; } return d; }); });
+  }
+  function newCaptcha() {
+    api('/api/captcha').then(function (c) { capId = c.id; $('capimg').innerHTML = c.svg; $('capans').value = ''; })
+      .catch(function () { $('autherr').textContent = 'Accounts need the Node server (python port.py serve).'; });
+  }
+  function setTab(reg) {
+    registering = reg;
+    $('tab-login').className = reg ? '' : 'on'; $('tab-reg').className = reg ? 'on' : '';
+    $('capbox').style.display = reg ? 'block' : 'none';
+    $('authgo').textContent = reg ? 'Create account' : 'Sign in';
+    $('pass').autocomplete = reg ? 'new-password' : 'current-password';
+    $('autherr').textContent = '';
+    if (reg) newCaptcha();
+  }
+  $('tab-login').onclick = function (e) { e.preventDefault(); setTab(false); };
+  $('tab-reg').onclick = function (e) { e.preventDefault(); setTab(true); };
+  $('capnew').onclick = function (e) { e.preventDefault(); newCaptcha(); };
+  $('auth').onsubmit = function (e) {
+    e.preventDefault();
+    var body = { username: $('user').value.trim(), password: $('pass').value };
+    if (registering) { body.captchaId = capId; body.captchaAnswer = $('capans').value; }
+    $('autherr').textContent = '';
+    api(registering ? '/api/register' : '/api/login', body).then(function (d) {
+      token = d.token; username = d.username;
+      store.set('hotd_token', token); store.set('hotd_user', username);
+      $('pass').value = ''; showAccount();
+    }).catch(function (err) {
+      $('autherr').textContent = err.message;
+      if (registering) newCaptcha();
+    });
+  };
+  $('logout').onclick = function (e) {
+    e.preventDefault();
+    api('/api/logout', {}).catch(function () {});
+    token = username = null; store.set('hotd_token', null); store.set('hotd_user', null); showAccount();
+  };
+  if (token) api('/api/me').then(function (u) { username = u.username; store.set('hotd_user', username); showAccount(); })
+                            .catch(function (e) { if (e.data) { token = null; store.set('hotd_token', null); } showAccount(); });
+  showAccount();
+  function needAccount() {
+    if (token) return false;
+    statusEl.textContent = 'Sign in or register to play online.';
+    $('user').focus();
+    return true;
+  }
+  function escHtml(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  var browsing = true;
+  function refreshRooms() {
+    if (!browsing) return;
+    fetch('/api/rooms', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (list) {
+      var box = document.getElementById('rooms');
+      document.getElementById('rcount').textContent = list.length ? '(' + list.length + ')' : '';
+      if (!list.length) { box.innerHTML = '<div class="empty">No open games yet. Host one, or wait for a friend to.</div>'; return; }
+      box.innerHTML = list.map(function (r) {
+        var full = r.players >= r.max;
+        return '<div class="room"><div class="who">' + escHtml(r.host) + '<div class="meta">' + r.code + ' · ' + r.players + '/' + r.max +
+               ' players · ' + (r.started ? 'in game' : 'waiting') + '</div></div><button data-code="' + r.code + '"' +
+               (full ? ' disabled>Full' : '>Join') + '</button></div>';
+      }).join('');
+      box.querySelectorAll('button[data-code]').forEach(function (b) {
+        b.onclick = function () { codeEl.value = b.dataset.code; document.getElementById('join').click(); };
+      });
+    }).catch(function () {
+      document.getElementById('rooms').innerHTML = '<div class="empty">Online play needs the Node server (python port.py serve).</div>';
+    });
+  }
+  refreshRooms();
+  setInterval(refreshRooms, 2000);
+
+  // ---------------------------------------------------------------- online co-op (server/server.js, src/netplay.c)
+  // Lockstep: both browsers run the whole game. The host (P1) sends every frame's input as a binary bundle; the
+  // guest (P2) runs a frame only when its bundle has arrived and sends its own gun to the host 60 times a second.
+  var ws = null, players = {}, notes = [];
+  function connect(onOpen, onMsg) {
+    ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = function () { ws.send(JSON.stringify({ t: 'auth', token: token })); };
+    ws.onmessage = function (ev) {
+      if (ev.data instanceof ArrayBuffer) return onMsg(new Uint8Array(ev.data));
+      var m = JSON.parse(ev.data);
+      if (m.t === 'auth-ok') return onOpen();
+      if (m.t === 'auth-failed') { token = null; store.set('hotd_token', null); showAccount(); show('Your session expired: sign in again.'); menu.style.display = 'flex'; return; }
+      onMsg(m);
+    };
+    ws.onclose = function () { notes.push('Connection to the server lost.'); renderPanel(); };
+  }
+  function send(m) { if (ws && ws.readyState === 1) ws.send(m instanceof Uint8Array ? m : JSON.stringify(m)); }
+  var roomCode = '';
+  function renderPanel() {
+    panel.style.display = 'block';
+    var rows = [mode === 'host' ? 'Room <b>' + roomCode + '</b>' : 'Room <b>' + roomCode + '</b> (you are P2)'];
+    rows.push('<span style="color:#f66">P1</span> ' + (players[0] || '…'));
+    rows.push('<span style="color:#6af">P2</span> ' + (players[1] || 'waiting — share the code'));
+    notes.slice(-3).forEach(function (n) { rows.push('<span style="color:#fc6">' + n + '</span>'); });
+    panel.innerHTML = rows.join('<br>') + (mode === 'host' && !hostStarted ? '<br><button id="go">Start game</button>' : '');
+    var go = document.getElementById('go');
+    if (go) go.onclick = startHostGame;
+  }
+  // Background tabs get no animation frames, which would freeze the game for both players: a worker timer keeps
+  // it going.
+  function keepRunningInBackground() {
+    var last = performance.now();
+    (function watch() { last = performance.now(); requestAnimationFrame(watch); })();
+    var w = new Worker(URL.createObjectURL(new Blob(['setInterval(function () { postMessage(0); }, 1000 / 60);'], { type: 'text/javascript' })));
+    w.onmessage = function () { if (performance.now() - last > 100) Module.ccall('port_background_tick', null, [], []); };
+  }
+  function saveFiles() {
+    var files = {};
+    (function walk(dir) {
+      var names = [];
+      try { names = FS.readdir(dir); } catch (e) { return; }
+      names.forEach(function (n) {
+        if (n === '.' || n === '..') return;
+        var p = dir + '/' + n;
+        try {
+          if (FS.isDir(FS.stat(p).mode)) return walk(p);
+          var d = FS.readFile(p), bin = '';
+          for (var i = 0; i < d.length; i += 0x8000) bin += String.fromCharCode.apply(null, d.subarray(i, i + 0x8000));
+          files[p.slice(6)] = btoa(bin);
+        } catch (e) { console.warn('co-op: cannot send ' + p, e); }
+      });
+    })('/save');
+    return files;
+  }
+
+  // Host
+  var hostStarted = false;
+  document.getElementById('host').onclick = function () {
+    if (!ready || needAccount()) return;
+    mode = 'host'; browsing = false; players[0] = escHtml(playerName()) + ' (you)';
+    statusEl.textContent = 'Creating a room…';
+    var hostInput = Module.cwrap('net_host_input', null, ['number', 'number', 'number', 'number', 'number', 'number']);
+    connect(function () { send({ t: 'host', name: playerName() }); }, function (m) {
+      if (m instanceof Uint8Array) return;
+      if (m.t === 'hosting') {
+        roomCode = m.room;
+        history.replaceState(null, '', '?join=' + m.room);
+        overlay.style.display = 'none';
+        renderPanel();
+        notes.push('Share this page\'s address (or the code). Start when P2 is in, or now: P2 can join later.');
+        renderPanel();
+      } else if (m.t === 'guest-join') {
+        players[1] = escHtml(m.name); renderPanel();
+        if (hostStarted) Module.ccall('net_host_join', null, ['number', 'string', 'string'], [m.slot, m.name, '']);
+      } else if (m.t === 'guest-leave') {
+        delete players[1]; notes.push('P2 left.'); renderPanel();
+        if (hostStarted) Module.ccall('net_host_leave', null, ['number'], [m.slot]);
+      } else if (m.t === 'gi') {
+        hostInput(m.slot, m.f, m.x, m.y, m.c, m.k);
+      } else if (m.t === 'desync') {
+        notes.push('P2 went out of sync at frame ' + m.frame + ' (they can reload to rejoin).'); renderPanel();
+      } else if (m.t === 'error') { notes.push(m.msg); renderPanel(); }
+    });
+  };
+  function startHostGame() {
+    hostStarted = true; renderPanel();
+    Module.netOnBundle = function (bytes) { send(bytes); };
+    var step = 'configure';
+    try {
+      Module.ccall('net_configure', null, ['number', 'number'], [1, 0]);
+      step = 'boot files'; var files = saveFiles();
+      step = 'send'; send({ t: 'start', files: files });
+      step = 'join'; if (players[1]) Module.ccall('net_host_join', null, ['number', 'string', 'string'], [1, players[1], '']);
+      step = 'run'; run();
+      step = 'background'; keepRunningInBackground();
+    } catch (e) {
+      console.error('co-op start failed at ' + step, e, e && e.stack);
+      notes.push('Could not start (' + step + '): ' + (e && (e.message || e.name || e.errno))); renderPanel();
+    }
+  }
+
+  // Guest
+  var guest = { started: false, pending: [], behind: 0, slot: 1 };
+  document.getElementById('join').onclick = function () {
+    var code = codeEl.value.trim().toUpperCase();
+    if (!ready || needAccount()) return;
+    if (code.length !== 4) { statusEl.textContent = 'Enter the 4-letter room code.'; return; }
+    mode = 'guest'; browsing = false; roomCode = code;
+    statusEl.textContent = 'Joining room ' + code + '…';
+    menu.style.display = 'none';
+    connect(function () { send({ t: 'join', room: code, name: playerName() }); }, function (m) {
+      if (m instanceof Uint8Array) {
+        if (!guest.started) guest.pending.push(m); else Module.ccall('net_push_bundles', null, ['array', 'number'], [m, m.length]);
+        return;
+      }
+      if (m.t === 'joined') {
+        guest.slot = m.slot; players[0] = escHtml(m.host); players[1] = escHtml(playerName()) + ' (you)';
+        statusEl.textContent = m.started ? 'Starting…' : 'Waiting for P1 to start the game…';
+        renderPanel();
+      } else if (m.t === 'net-boot') {
+        startGuest(m.files || {});
+      } else if (m.t === 'room-closed') {
+        notes.push(m.reason + '. The game has ended.'); renderPanel();
+      } else if (m.t === 'error') { show(m.msg); menu.style.display = 'flex'; browsing = true; refreshRooms(); }
+    });
+  };
+  function startGuest(files) {
+    guest.started = true;
+    // start from exactly P1's files: this browser's own saves stay in its storage (a guest never syncs /save)
+    try { FS.mkdirTree('/save'); } catch (e) {}
+    (function wipe(dir) {
+      var names = [];
+      try { names = FS.readdir(dir); } catch (e) { return; }
+      names.forEach(function (n) {
+        if (n === '.' || n === '..') return;
+        var p = dir + '/' + n;
+        try { if (FS.isDir(FS.stat(p).mode)) { wipe(p); FS.rmdir(p); } else FS.unlink(p); } catch (e) {}
+      });
+    })('/save');
+    Object.keys(files).forEach(function (rel) {
+      var p = '/save/' + rel, bin = atob(files[rel]), d = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) d[i] = bin.charCodeAt(i);
+      try { FS.mkdirTree(p.slice(0, p.lastIndexOf('/'))); } catch (e) {}
+      FS.writeFile(p, d);
+    });
+    guest.pending.forEach(function (b) { Module.ccall('net_push_bundles', null, ['array', 'number'], [b, b.length]); });
+    guest.pending = [];
+    Module.ccall('net_configure', null, ['number', 'number'], [2, guest.slot]);
+    run();
+    keepRunningInBackground();
+    // P2's gun: flags bit 0 trigger, bit 1 reload, bit 2 pointer over the game (src/gun_input.c port_net_input)
+    var mx = 0, my = 0, over = 0, held = 0, clicked = 0;
+    canvas.addEventListener('mousemove', function (e) {
+      var r = canvas.getBoundingClientRect();
+      mx = (e.clientX - r.left) * (canvas.width || 640) / r.width;
+      my = (e.clientY - r.top) * (canvas.height || 480) / r.height;
+      over = 1;
+    });
+    canvas.addEventListener('mouseleave', function () { over = 0; });
+    canvas.addEventListener('mousedown', function (e) { var b = e.button === 2 ? 2 : 1; held |= b; clicked |= b; });
+    addEventListener('mouseup', function (e) { held &= e.button === 2 ? ~2 : ~1; });
+    addEventListener('blur', function () { held = 0; });
+    setInterval(function () {
+      var b = held | clicked; clicked = 0;     // a click shorter than the send interval still fires once
+      send({ t: 'input', f: (b & 3) | (over ? 4 : 0), x: Math.round(mx), y: Math.round(my), c: 0, k: 0 });
+    }, 1000 / 60);
+  }
+  Module.onNetStatus = function (queued, frame) {
+    guest.behind = queued;
+    if (queued > 30) {
+      overlay.style.display = 'flex'; menu.style.display = 'none';
+      var pct = Math.floor(100 * frame / Math.max(1, frame + queued));
+      barEl.style.width = pct + '%';
+      statusEl.textContent = 'Catching up with P1\'s game… ' + pct + '%';
+    } else if (guest.started && overlay.style.display !== 'none') { overlay.style.display = 'none'; canvas.focus(); }
+  };
+  Module.onNetDesync = function (frame) {
+    notes.push('Out of sync with P1 at frame ' + frame + '. Reload to rejoin.'); renderPanel();
+    send({ t: 'desync', frame: frame });
+  };
+})();
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>
