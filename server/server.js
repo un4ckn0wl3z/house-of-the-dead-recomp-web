@@ -115,7 +115,12 @@ const server = http.createServer((req, res) => {
   fs.stat(file, (err, st) => {
     if (err || !st.isFile()) { res.writeHead(404); return res.end('not found'); }
     const type = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
-    const headers = { 'Content-Type': type, 'Cache-Control': p.endsWith('.html') ? 'no-cache' : 'max-age=3600' };
+    // revalidate every time (a rebuild must reach everyone at once: host and guest have to run the same build),
+    // but answer 304 when the file has not changed, so the 170 MB data package is downloaded once
+    const lastMod = new Date(Math.floor(st.mtimeMs / 1000) * 1000).toUTCString();
+    const headers = { 'Content-Type': type, 'Cache-Control': 'no-cache', 'Last-Modified': lastMod };
+    const since = Date.parse(req.headers['if-modified-since'] || '');
+    if (since && since >= Math.floor(st.mtimeMs / 1000) * 1000) { res.writeHead(304, headers); return res.end(); }
     // compress the code and the packaged data (the data shrinks to about a third)
     const gz = /gzip/.test(req.headers['accept-encoding'] || '') && /\.(js|wasm|data|html)$/.test(file);
     if (gz) {
@@ -229,7 +234,7 @@ server.on('upgrade', (req, socket) => {
       if (r.started) sendBoot(r, slot);
     } else if (m.t === 'start' && role === 'host') {
       // the host's game starts now: its save files go to the guests so they start from the same state
-      room.boot = m.files || {}; room.started = true;
+      room.boot = m.files || {}; room.build = String(m.build || ''); room.started = true;
       q.countGame.run(user.id);
       for (const s of room.guests.keys()) sendBoot(room, s);
     } else if (m.t === 'input' && role === 'guest') {
@@ -254,7 +259,7 @@ server.on('upgrade', (req, socket) => {
 function sendBoot(r, s) {
   const g = r.guests.get(s);
   if (!g) return;
-  json(g.ws, { t: 'net-boot', files: r.boot });
+  json(g.ws, { t: 'net-boot', files: r.boot, build: r.build });
   for (const b of r.log) g.ws.send(b);
   g.ready = true;
 }

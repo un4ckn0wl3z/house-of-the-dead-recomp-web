@@ -132,18 +132,37 @@ static void present(void) {
     // crosshairs: the game draws none for light guns (gun_input.c says where each player aims)
     {
         extern int gun_crosshair(int slot, int *x, int *y);
-        static const uint8_t col[2][3] = {{255, 40, 40}, {60, 140, 255}};
+        // the HUD's player colours: 1P red, 2P blue; a black outline keeps them visible on any background
+        static const uint8_t col[2][3] = {{255, 50, 40}, {40, 190, 255}};
+        // 3x5 glyphs for the "1P" / "2P" tag
+        static const uint8_t glyph[3][5] = {{2, 6, 2, 2, 7}, {6, 1, 2, 4, 7}, {6, 5, 6, 4, 4}};   // 1, 2, P
         for (int s = 0; s < 2; s++) {
             int x, y;
             if (!gun_crosshair(s, &x, &y)) continue;
             x = x * p->w / g_mode_w; y = y * p->h / g_mode_h;
-            SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
-            SDL_Rect sh[4] = {{x - 9, y - 1, 7, 3}, {x + 3, y - 1, 7, 3}, {x - 1, y - 9, 3, 7}, {x - 1, y + 3, 3, 7}};
-            SDL_RenderFillRects(ren, sh, 4);
-            SDL_SetRenderDrawColor(ren, col[s][0], col[s][1], col[s][2], 255);
-            SDL_RenderDrawLine(ren, x - 8, y, x - 3, y); SDL_RenderDrawLine(ren, x + 3, y, x + 8, y);
-            SDL_RenderDrawLine(ren, x, y - 8, x, y - 3); SDL_RenderDrawLine(ren, x, y + 3, x, y + 8);
-            SDL_RenderDrawPoint(ren, x, y);
+            for (int pass = 0; pass < 2; pass++) {
+                int o = pass == 0 ? 1 : 0;          // outline pass draws everything 1 px bigger in black
+                if (pass == 0) SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+                else SDL_SetRenderDrawColor(ren, col[s][0], col[s][1], col[s][2], 255);
+                SDL_Rect arms[4] = {{x - 14 - o, y - 1 - o, 9 + 2 * o, 2 + 2 * o}, {x + 5 - o, y - 1 - o, 9 + 2 * o, 2 + 2 * o},
+                                    {x - 1 - o, y - 14 - o, 2 + 2 * o, 9 + 2 * o}, {x - 1 - o, y + 5 - o, 2 + 2 * o, 9 + 2 * o}};
+                SDL_RenderFillRects(ren, arms, 4);
+                for (int a = 0; a < 48; a++) {      // ring, radius 9
+                    double t = a * 6.2831853 / 48;
+                    int rx = x + (int)lround(9 * cos(t)), ry = y + (int)lround(9 * sin(t));
+                    SDL_Rect d = {rx - o, ry - o, 1 + 2 * o, 1 + 2 * o};
+                    SDL_RenderFillRect(ren, &d);
+                }
+                // tag at the lower right: "1P" / "2P"
+                const uint8_t *g[2] = {glyph[s], glyph[2]};
+                for (int c = 0; c < 2; c++)
+                    for (int r = 0; r < 5; r++)
+                        for (int b = 0; b < 3; b++)
+                            if (g[c][r] & (4 >> b)) {
+                                SDL_Rect d = {x + 12 + c * 5 + b - o, y + 10 + r - o, 1 + 2 * o, 1 + 2 * o};
+                                SDL_RenderFillRect(ren, &d);
+                            }
+            }
         }
     }
     SDL_RenderPresent(ren);

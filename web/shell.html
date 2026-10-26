@@ -108,6 +108,8 @@
   var Module = window.Module = {
     canvas: canvas, noInitialRun: true,
     netGuest: !!params.get('join'),     // web/prejs.js: a guest's /save stays in memory
+    buildId: '__BUILD_ID__',            // port.py: a hash of this build
+    locateFile: function (p) { return p + '?v=' + Module.buildId; },
     print: function (t) { console.log(t); }, printErr: function (t) { console.warn(t); },
     setStatus: function (t) {
       var m = t.match(/\((\d+(\.\d+)?)\/(\d+)\)/);
@@ -239,11 +241,22 @@
   }
   function send(m) { if (ws && ws.readyState === 1) ws.send(m instanceof Uint8Array ? m : JSON.stringify(m)); }
   var roomCode = '';
+  var noteShown = 0;
   function renderPanel() {
     panel.style.display = 'block';
+    // once the game runs, a one-line tag (plus any new warning) instead of the lobby panel
+    if (hostStarted || guest.started) {
+      var tag = '<b>' + roomCode + '</b> · <span style="color:#f66">1P</span> ' + (players[0] || '…') +
+                ' · <span style="color:#3cf">2P</span> ' + (players[1] || 'free');
+      var fresh = notes.slice(noteShown);
+      panel.innerHTML = tag + fresh.map(function (n) { return '<br><span style="color:#fc6">' + n + '</span>'; }).join('');
+      panel.style.opacity = fresh.length ? '1' : '.55';
+      return;
+    }
+    noteShown = notes.length;
     var rows = [mode === 'host' ? 'Room <b>' + roomCode + '</b>' : 'Room <b>' + roomCode + '</b> (you are P2)'];
     rows.push('<span style="color:#f66">P1</span> ' + (players[0] || '…'));
-    rows.push('<span style="color:#6af">P2</span> ' + (players[1] || 'waiting — share the code'));
+    rows.push('<span style="color:#3cf">P2</span> ' + (players[1] || 'waiting — share the code'));
     notes.slice(-3).forEach(function (n) { rows.push('<span style="color:#fc6">' + n + '</span>'); });
     panel.innerHTML = rows.join('<br>') + (mode === 'host' && !hostStarted ? '<br><button id="go">Start game</button>' : '');
     var go = document.getElementById('go');
@@ -312,7 +325,7 @@
     try {
       Module.ccall('net_configure', null, ['number', 'number'], [1, 0]);
       step = 'boot files'; var files = saveFiles();
-      step = 'send'; send({ t: 'start', files: files });
+      step = 'send'; send({ t: 'start', files: files, build: Module.buildId });
       step = 'join'; if (players[1]) Module.ccall('net_host_join', null, ['number', 'string', 'string'], [1, players[1], '']);
       step = 'run'; run();
       step = 'background'; keepRunningInBackground();
@@ -341,6 +354,7 @@
         statusEl.textContent = m.started ? 'Starting…' : 'Waiting for P1 to start the game…';
         renderPanel();
       } else if (m.t === 'net-boot') {
+        if (m.build && m.build !== Module.buildId) { show('P1 runs a different build of the game. Reload this page (P1 may have rebuilt it).'); return; }
         startGuest(m.files || {});
       } else if (m.t === 'room-closed') {
         notes.push(m.reason + '. The game has ended.'); renderPanel();
@@ -369,6 +383,7 @@
     guest.pending.forEach(function (b) { Module.ccall('net_push_bundles', null, ['array', 'number'], [b, b.length]); });
     guest.pending = [];
     Module.ccall('net_configure', null, ['number', 'number'], [2, guest.slot]);
+    renderPanel();
     run();
     keepRunningInBackground();
     // P2's gun: flags bit 0 trigger, bit 1 reload, bit 2 pointer over the game (src/gun_input.c port_net_input)

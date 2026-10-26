@@ -204,6 +204,15 @@ def build_web(gdir):
         '--pre-js', 'web/prejs.js', '--shell-file', 'web/shell.html',
         '--preload-file', data + '@/game']
     run(link, cwd=ROOT, env=env)
+    # every build gets its own URLs (index.js?v=..., Module.locateFile adds it to the wasm and the data): a
+    # browser never mixes a cached old build with a new page, and co-op players always run the same build
+    build_id = hashlib.sha256(open(os.path.join(out, 'index.wasm'), 'rb').read()).hexdigest()[:12]
+    page = os.path.join(out, 'index.html')
+    html = open(page, encoding='utf-8').read()
+    html = html.replace('__BUILD_ID__', build_id)
+    html = html.replace('src="index.js"', 'src="index.js?v=%s"' % build_id).replace('src=index.js', 'src="index.js?v=%s"' % build_id)
+    open(page, 'w', encoding='utf-8').write(html)
+    log('build id %s' % build_id)
     log('web build ready: %s' % out)
 
 
