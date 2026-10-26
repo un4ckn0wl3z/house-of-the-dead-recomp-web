@@ -117,7 +117,7 @@ void audio_init(void) {
     memset(&want, 0, sizeof want);
     want.freq = MIX_RATE; want.format = AUDIO_S16SYS; want.channels = 2;
 #ifdef __EMSCRIPTEN__
-    want.samples = 2048;
+    want.samples = 4096;   // the mixer runs on the main thread: a long frame or a GC pause must not underrun it
 #else
     want.samples = 1024;
 #endif

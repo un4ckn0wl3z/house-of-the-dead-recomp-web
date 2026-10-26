@@ -12,5 +12,8 @@
   },
   "entries": [
     "0x579733"
-  ]
+  ],
+  "wraps": {
+    "0x425798": "host_insert_score"
+  }
 }

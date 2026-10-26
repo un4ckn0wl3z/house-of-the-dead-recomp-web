@@ -27,6 +27,10 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE COLLATE NOCASE,
     salt TEXT NOT NULL, hash TEXT NOT NULL, created_at INTEGER NOT NULL, games INTEGER NOT NULL DEFAULT 0);
+  CREATE TABLE IF NOT EXISTS scores (
+    id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    mode INTEGER NOT NULL, score INTEGER NOT NULL, stage INTEGER NOT NULL, name TEXT NOT NULL, created_at INTEGER NOT NULL);
+  CREATE INDEX IF NOT EXISTS scores_by_mode ON scores (mode, score DESC);
   CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at INTEGER NOT NULL);
 `);
@@ -37,6 +41,16 @@ const q = {
   userByToken: db.prepare('SELECT users.* FROM sessions JOIN users ON users.id = sessions.user_id WHERE token = ?'),
   delSession: db.prepare('DELETE FROM sessions WHERE token = ?'),
   countGame: db.prepare('UPDATE users SET games = games + 1 WHERE id = ?'),
+  addScore: db.prepare('INSERT INTO scores (user_id, mode, score, stage, name, created_at) VALUES (?, ?, ?, ?, ?, ?)'),
+  // each account's best entry per mode, best first: points for Arcade (0) and PC Mode (1), clear times in ms for
+  // the Boss Mode tables (2 Chariot, 3 Hangedman, 4 Hermit, 5 Magician, 6 All Bosses: lower is better)
+  topPoints: db.prepare(`SELECT s.score, s.stage, s.name, u.username, s.created_at FROM scores s JOIN users u ON u.id = s.user_id
+    WHERE s.mode = ? AND s.id = (SELECT id FROM scores WHERE user_id = s.user_id AND mode = s.mode ORDER BY score DESC, created_at LIMIT 1)
+    ORDER BY s.score DESC, s.created_at LIMIT ?`),
+  topTimes: db.prepare(`SELECT s.score, s.stage, s.name, u.username, s.created_at FROM scores s JOIN users u ON u.id = s.user_id
+    WHERE s.mode = ? AND s.id = (SELECT id FROM scores WHERE user_id = s.user_id AND mode = s.mode ORDER BY score ASC, created_at LIMIT 1)
+    ORDER BY s.score ASC, s.created_at LIMIT ?`),
+  recentByUser: db.prepare('SELECT COUNT(*) AS n FROM scores WHERE user_id = ? AND created_at > ?'),
 };
 const hashPassword = (pw, salt) => crypto.scryptSync(pw, salt, 64).toString('hex');
 function newSession(userId) {
@@ -63,6 +77,10 @@ function limited(req) {
 async function api(req, res, p) {
   const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
   if (p === '/api/captcha') return send(200, captcha.create());
+  if (p === '/api/scores' && req.method === 'GET') {
+    const mode = Math.max(0, Math.min(6, parseInt(new URL(req.url, 'http://x').searchParams.get('mode') || '0', 10) || 0));
+    return send(200, { mode, time: mode >= 2, scores: (mode >= 2 ? q.topTimes : q.topPoints).all(mode, 20) });
+  }
   if (p === '/api/me') { const u = userOf(req.headers['x-token']); return u ? send(200, { username: u.username, games: u.games }) : send(401, { error: 'not signed in' }); }
   if (req.method !== 'POST') return send(405, { error: 'POST only' });
   if (limited(req)) return send(429, { error: 'Too many attempts, wait a minute.' });
@@ -83,6 +101,27 @@ async function api(req, res, p) {
     const want = Buffer.from(u.hash, 'hex'), got = Buffer.from(hashPassword(String(b.password || ''), u.salt), 'hex');
     if (!crypto.timingSafeEqual(want, got)) return send(400, { error: 'Wrong user name or password.' });
     return send(200, { token: newSession(u.id), username: u.username });
+  }
+  if (p === '/api/scores') {
+    // a high score the game just filed in its own table (src/game.c host_insert_score); trusted only as far as a
+    // signed-in browser is: bounds and a rate limit, no replay verification
+    const u = userOf(req.headers['x-token']);
+    if (!u) return send(401, { error: 'Sign in to put your score on the scoreboard.' });
+    const mode = b.mode | 0, score = Math.floor(Number(b.score)), stage = b.stage | 0;
+    const name = String(b.name || '').replace(/[^ -~]/g, '').trim().slice(0, 16) || u.username;
+    if (mode < 0 || mode > 6 || !(score > 0 && score <= 9999999) || stage < 1 || stage > 9) return send(400, { error: 'bad score' });
+    if (q.recentByUser.get(u.id, Date.now() - 600000).n >= 20) return send(429, { error: 'too many scores' });
+    q.addScore.run(u.id, mode, score, stage, name, Date.now());
+    return send(200, { ok: true });
+  }
+  if (p === '/api/rooms/close') {
+    const u = userOf(req.headers['x-token']);
+    const r = rooms.get(String(b.room || '').toUpperCase());
+    if (!u) return send(401, { error: 'not signed in' });
+    if (!r) return send(404, { error: 'no such room' });
+    if (r.ownerId !== u.id) return send(403, { error: 'only the host can close this room' });
+    closeRoom(r, r.hostName + ' closed the room');
+    return send(200, {});
   }
   if (p === '/api/logout') { q.delSession.run(String(req.headers['x-token'] || '')); return send(200, {}); }
   send(404, { error: 'unknown' });
@@ -159,8 +198,12 @@ function wsAccept(req, socket) {
       : (() => { const h = Buffer.alloc(10); h[0] = bin ? 0x82 : 0x81; h[1] = 127; h.writeBigUInt64BE(BigInt(n), 2); return h; })();
     socket.write(Buffer.concat([head, payload]));
   };
-  const close = () => { if (!ws.open) return; ws.open = false; socket.destroy(); if (ws.onclose) ws.onclose(); };
+  const close = () => { if (!ws.open) return; ws.open = false; live.delete(ws); socket.destroy(); if (ws.onclose) ws.onclose(); };
+  ws.close = close;
+  ws.lastSeen = Date.now();
+  live.add(ws);
   socket.on('data', (chunk) => {
+    ws.lastSeen = Date.now();
     ws.buf = Buffer.concat([ws.buf, chunk]);
     for (;;) {
       if (ws.buf.length < 2) return;
@@ -186,11 +229,28 @@ function wsAccept(req, socket) {
   socket.on('close', close); socket.on('error', close);
   return ws;
 }
+// Heartbeat: a player whose connection died without a close (sleep, network change) would keep a room open forever.
+// Ping every 20 s; anyone silent for 60 s is dropped, which closes their room.
+const live = new Set();
+setInterval(() => {
+  const now = Date.now();
+  for (const ws of live) {
+    if (now - ws.lastSeen > 60000) { ws.close(); continue; }
+    try { ws.socket.write(Buffer.from([0x89, 0])); } catch (e) { ws.close(); }
+  }
+}, 20000);
 
 // ---------------------------------------------------------------- co-op rooms
 // The host's game sends one binary bundle per frame; the server keeps them all so a player who joins late can
 // replay the game from the start, and forwards them to the guest. The guest's input goes to the host as JSON.
 const rooms = new Map();
+function closeRoom(r, reason) {
+  if (!rooms.has(r.code)) return;
+  rooms.delete(r.code);
+  for (const g of r.guests.values()) json(g.ws, { t: 'room-closed', reason });
+  json(r.host, { t: 'room-closed', reason });
+  console.log('room', r.code, 'closed:', reason);
+}
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 function newCode() { let c; do { c = Array.from({ length: 4 }, () => CODE_CHARS[crypto.randomInt(CODE_CHARS.length)]).join(''); } while (rooms.has(c)); return c; }
 const json = (ws, m) => ws && ws.send(JSON.stringify(m));
@@ -217,8 +277,10 @@ server.on('upgrade', (req, socket) => {
     }
     if (!user) return json(ws, { t: 'auth-failed' });
     if (m.t === 'host') {
-      room = { code: newCode(), host: ws, hostName: name, guests: new Map(), log: [], logBytes: 0, boot: null, started: false,
-               created: Date.now() };
+      // one room per account: hosting again closes the old one
+      for (const r of [...rooms.values()]) if (r.ownerId === user.id) closeRoom(r, r.hostName + ' started a new room');
+      room = { code: newCode(), host: ws, hostName: name, ownerId: user.id, guests: new Map(), log: [], logBytes: 0, boot: null,
+               started: false, created: Date.now() };
       rooms.set(room.code, room); role = 'host';
       json(ws, { t: 'hosting', room: room.code });
       console.log('room', room.code, 'hosted by', name);
@@ -239,6 +301,12 @@ server.on('upgrade', (req, socket) => {
       for (const s of room.guests.keys()) sendBoot(room, s);
     } else if (m.t === 'input' && role === 'guest') {
       json(room.host, { t: 'gi', slot, f: m.f | 0, x: +m.x || 0, y: +m.y || 0, c: m.c | 0, k: m.k | 0 });
+    } else if (m.t === 'close' && role === 'host' && room) {
+      closeRoom(room, room.hostName + ' closed the room');
+    } else if (m.t === 'leave' && role === 'guest' && room) {
+      room.guests.delete(slot);
+      json(room.host, { t: 'guest-leave', slot, name });
+      room = null;
     } else if (m.t === 'desync' && room) {
       json(room.host, { t: 'desync', name, frame: m.frame });
     }
@@ -246,9 +314,7 @@ server.on('upgrade', (req, socket) => {
   ws.onclose = () => {
     if (!room) return;
     if (role === 'host') {
-      for (const g of room.guests.values()) json(g.ws, { t: 'room-closed', reason: room.hostName + ' left' });
-      rooms.delete(room.code);
-      console.log('room', room.code, 'closed');
+      if (room.host === ws) closeRoom(room, room.hostName + ' left');
     } else {
       room.guests.delete(slot);
       json(room.host, { t: 'guest-leave', slot, name });

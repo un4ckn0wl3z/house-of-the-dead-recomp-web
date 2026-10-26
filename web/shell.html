@@ -46,10 +46,23 @@
   .room button { padding: 4px 12px; font-size: 13px; }
   .room button:disabled { opacity: .4; cursor: default; }
   .empty { padding: 10px; color: #888; font-size: 13px; }
+  #board { border: 1px solid #511; border-radius: 6px; background: rgba(20,4,4,.8); text-align: left; }
+  #board .head { padding: 6px 10px; border-bottom: 1px solid #411; color: #f88; font-weight: 600; font-size: 13px;
+                 display: flex; justify-content: space-between; gap: 8px; }
+  #board .modes a { color: #999; text-decoration: none; font-weight: 500; } #board .modes a.on { color: #f66; font-weight: 600; }
+  #bosses { padding: 5px 10px 0; font-size: 12px; } #bosses a { color: #999; text-decoration: none; } #bosses a.on { color: #f66; font-weight: 600; }
+  #scores { margin: 0; padding: 4px 10px 6px 34px; max-height: 220px; overflow-y: auto; font-size: 13px; }
+  #scores li { padding: 2px 0; } #scores li.empty { list-style: none; margin-left: -24px; }
+  #scores .pts { float: right; font-variant-numeric: tabular-nums; color: #fff; }
+  #scores .meta { color: #888; font-size: 12px; }
+  #scores li.me { color: #ff8; }
+  #toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); padding: 8px 14px; border-radius: 6px;
+           background: rgba(30,0,0,.9); border: 1px solid #a11; font-size: 14px; display: none; z-index: 3; }
   #net { position: fixed; top: 8px; left: 8px; padding: 6px 10px; background: rgba(0,0,0,.7); border: 1px solid #511; border-radius: 6px;
          font-size: 13px; display: none; z-index: 2; }
   #net b { color: #f66; letter-spacing: 2px; }
   #net button { font-size: 13px; padding: 4px 10px; margin-top: 6px; }
+  #net button.mini { font-size: 12px; padding: 2px 8px; margin: 0 0 0 6px; }
   #tools { position: fixed; right: 8px; bottom: 8px; opacity: .35; z-index: 2; }
   #tools:hover { opacity: 1; }
   #tools button { font-size: 12px; padding: 4px 8px; }
@@ -83,11 +96,20 @@
       <div id="rooms"><div class="empty">Looking for games…</div></div>
     </div>
     <div class="row"><input id="code" maxlength="4" placeholder="CODE" autocomplete="off"><button id="join" class="alt">Join by code</button></div>
+    <div id="board">
+      <div class="head">Scoreboard
+        <span class="modes"><a href="#" data-mode="0" class="on">Arcade</a> · <a href="#" data-mode="1">PC Mode</a> · <a href="#" data-mode="2">Boss Mode</a></span>
+      </div>
+      <div id="bosses" style="display:none"><a href="#" data-boss="2" class="on">Chariot</a> · <a href="#" data-boss="3">Hangedman</a> ·
+        <a href="#" data-boss="4">Hermit</a> · <a href="#" data-boss="5">Magician</a> · <a href="#" data-boss="6">All Bosses</a></div>
+      <ol id="scores"><li class="empty">Loading…</li></ol>
+    </div>
   </div>
   <div id="help">Aim with the mouse. Left button fires, right button reloads (it shoots off screen, as on the arcade
     cabinet). Space skips scenes. Scores and settings are kept in this browser.</div>
 </div>
 <div id="net"></div>
+<div id="toast"></div>
 <div id="tools"><button id="fs">Fullscreen</button></div>
 <script>
 (function () {   // own scope: index.js defines globals such as run()
@@ -178,7 +200,7 @@
     api(registering ? '/api/register' : '/api/login', body).then(function (d) {
       token = d.token; username = d.username;
       store.set('hotd_token', token); store.set('hotd_user', username);
-      $('pass').value = ''; showAccount();
+      $('pass').value = ''; showAccount(); submitPending(); loadScores();
     }).catch(function (err) {
       $('autherr').textContent = err.message;
       if (registering) newCaptcha();
@@ -208,12 +230,18 @@
       if (!list.length) { box.innerHTML = '<div class="empty">No open games yet. Host one, or wait for a friend to.</div>'; return; }
       box.innerHTML = list.map(function (r) {
         var full = r.players >= r.max;
+        var mine = username && r.host.toLowerCase() === username.toLowerCase();
         return '<div class="room"><div class="who">' + escHtml(r.host) + '<div class="meta">' + r.code + ' · ' + r.players + '/' + r.max +
-               ' players · ' + (r.started ? 'in game' : 'waiting') + '</div></div><button data-code="' + r.code + '"' +
-               (full ? ' disabled>Full' : '>Join') + '</button></div>';
+               ' players · ' + (r.started ? 'in game' : 'waiting') + '</div></div>' +
+               (mine ? '<button class="alt" data-close="' + r.code + '">Close</button>'
+                     : '<button data-code="' + r.code + '"' + (full ? ' disabled>Full' : '>Join') + '</button>') + '</div>';
       }).join('');
       box.querySelectorAll('button[data-code]').forEach(function (b) {
         b.onclick = function () { codeEl.value = b.dataset.code; document.getElementById('join').click(); };
+      });
+      // your own room (e.g. left open in a closed tab): close it from here
+      box.querySelectorAll('button[data-close]').forEach(function (b) {
+        b.onclick = function () { api('/api/rooms/close', { room: b.dataset.close }).then(refreshRooms, function (e) { statusEl.textContent = e.message; }); };
       });
     }).catch(function () {
       document.getElementById('rooms').innerHTML = '<div class="empty">Online play needs the Node server (python port.py serve).</div>';
@@ -221,6 +249,69 @@
   }
   refreshRooms();
   setInterval(refreshRooms, 2000);
+
+  // ---------------------------------------------------------------- scoreboard (server/server.js /api/scores)
+  // The game's own ranking stays in this browser; new high scores also go to the online scoreboard (src/game.c
+  // reports them as the game files them). Boss Mode keeps five tables of clear times (modes 2-6, one per boss).
+  var boardMode = 0, boardBoss = 2;
+  function clearTime(ms) {
+    var m = Math.floor(ms / 60000), s = Math.floor(ms / 1000) % 60, c = Math.floor(ms / 10) % 100;
+    return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s + '.' + (c < 10 ? '0' : '') + c;
+  }
+  function toast(msg) {
+    var t = $('toast'); t.textContent = msg; t.style.display = 'block';
+    clearTimeout(toast.timer); toast.timer = setTimeout(function () { t.style.display = 'none'; }, 5000);
+  }
+  function loadScores() {
+    var mode = boardMode === 2 ? boardBoss : boardMode;
+    api('/api/scores?mode=' + mode).then(function (d) {
+      $('scores').innerHTML = d.scores.length ? d.scores.map(function (s) {
+        var me = username && s.username.toLowerCase() === username.toLowerCase();
+        var value = d.time ? clearTime(s.score) : s.score.toLocaleString();
+        return '<li' + (me ? ' class="me"' : '') + '><span class="pts">' + value + '</span>' + escHtml(s.username) +
+               ' <span class="meta">' + escHtml(s.name) + (d.time ? '' : ' · stage ' + s.stage) + '</span></li>';
+      }).join('') : '<li class="empty">No scores yet. Be the first.</li>';
+    }).catch(function () { $('scores').innerHTML = '<li class="empty">The scoreboard needs the Node server.</li>'; });
+  }
+  document.querySelectorAll('#board .modes a').forEach(function (a) {
+    a.onclick = function (e) {
+      e.preventDefault(); boardMode = +a.dataset.mode;
+      document.querySelectorAll('#board .modes a').forEach(function (x) { x.className = x === a ? 'on' : ''; });
+      $('bosses').style.display = boardMode === 2 ? 'block' : 'none';
+      loadScores();
+    };
+  });
+  document.querySelectorAll('#bosses a').forEach(function (a) {
+    a.onclick = function (e) {
+      e.preventDefault(); boardBoss = +a.dataset.boss;
+      document.querySelectorAll('#bosses a').forEach(function (x) { x.className = x === a ? 'on' : ''; });
+      loadScores();
+    };
+  });
+  function submitScore(s) {
+    return api('/api/scores', s).then(function () {
+      toast((s.mode >= 2 ? 'Clear time ' + clearTime(s.score) : 'Score ' + s.score.toLocaleString()) + ' is on the online scoreboard.');
+      loadScores();
+    });
+  }
+  Module.onHighScore = function (mode, score, stage, name) {
+    var s = { mode: mode, score: score, stage: stage, name: name };
+    if (!token) {
+      store.set('hotd_pending_score', JSON.stringify(s));
+      toast('New high score! Sign in (or register) on the start page to put it on the online scoreboard.');
+      return;
+    }
+    submitScore(s).catch(function (e) { toast('Scoreboard: ' + e.message); });
+  };
+  // a score made while signed out goes up after the next sign-in
+  function submitPending() {
+    var p = store.get('hotd_pending_score');
+    if (!p || !token) return;
+    store.set('hotd_pending_score', null);
+    try { submitScore(JSON.parse(p)).catch(function () {}); } catch (e) {}
+  }
+  loadScores();
+  setInterval(function () { if (overlay.style.display !== 'none') loadScores(); }, 15000);
 
   // ---------------------------------------------------------------- online co-op (server/server.js, src/netplay.c)
   // Lockstep: both browsers run the whole game. The host (P1) sends every frame's input as a binary bundle; the
@@ -249,8 +340,14 @@
       var tag = '<b>' + roomCode + '</b> · <span style="color:#f66">1P</span> ' + (players[0] || '…') +
                 ' · <span style="color:#3cf">2P</span> ' + (players[1] || 'free');
       var fresh = notes.slice(noteShown);
-      panel.innerHTML = tag + fresh.map(function (n) { return '<br><span style="color:#fc6">' + n + '</span>'; }).join('');
+      panel.innerHTML = tag + ' <button id="quit" class="mini">' + (mode === 'host' ? 'Close room' : 'Leave') + '</button>' +
+        fresh.map(function (n) { return '<br><span style="color:#fc6">' + n + '</span>'; }).join('');
       panel.style.opacity = fresh.length ? '1' : '.55';
+      $('quit').onclick = function () {
+        if (mode === 'host' && !confirm('Close the room? The game ends for both players.')) return;
+        send({ t: mode === 'host' ? 'close' : 'leave' });
+        setTimeout(function () { location.href = '/'; }, 200);
+      };
       return;
     }
     noteShown = notes.length;
@@ -313,6 +410,15 @@
         if (hostStarted) Module.ccall('net_host_leave', null, ['number'], [m.slot]);
       } else if (m.t === 'gi') {
         hostInput(m.slot, m.f, m.x, m.y, m.c, m.k);
+      } else if (m.t === 'room-closed') {
+        if (!hostStarted) {     // closed before the game started (e.g. from another tab): back to the menu
+          mode = 'solo'; panel.style.display = 'none'; ws.onclose = null; ws.close();
+          history.replaceState(null, '', '/');
+          overlay.style.display = 'flex'; menu.style.display = 'flex'; statusEl.textContent = m.reason + '.';
+          browsing = true; refreshRooms();
+          return;
+        }
+        notes.push(m.reason + '.'); renderPanel();
       } else if (m.t === 'desync') {
         notes.push('P2 went out of sync at frame ' + m.frame + ' (they can reload to rejoin).'); renderPanel();
       } else if (m.t === 'error') { notes.push(m.msg); renderPanel(); }

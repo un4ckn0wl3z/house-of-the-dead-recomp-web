@@ -200,7 +200,7 @@ def build_web(gdir):
     link = emcc + ['-o', os.path.join(out, 'index.html')] + objs + [
         '-O2', '-sUSE_SDL=2', '-sINITIAL_MEMORY=256MB', '-sALLOW_MEMORY_GROWTH=1', '-sMAXIMUM_MEMORY=1GB',
         '-sSTACK_SIZE=8MB', '-sINVOKE_RUN=0', '-sEXIT_RUNTIME=0', '-sENVIRONMENT=web',
-        '-sEXPORTED_RUNTIME_METHODS=callMain,ccall,cwrap', '-lidbfs.js',
+        '-sEXPORTED_RUNTIME_METHODS=callMain,ccall,cwrap,UTF8ToString,ENV', '-lidbfs.js',
         '--pre-js', 'web/prejs.js', '--shell-file', 'web/shell.html',
         '--preload-file', data + '@/game']
     run(link, cwd=ROOT, env=env)

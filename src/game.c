@@ -6,6 +6,9 @@
 #include "host.h"
 #include "netplay.h"
 #include <stdlib.h>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 void host_run_timers(void);
 void cdmusic_poll(void);
@@ -53,6 +56,36 @@ void port_mouse_motion(int *dx, int *dy) {
     W32(MOUSE_SUM_X, (uint32_t)x); W32(MOUSE_SUM_Y, (uint32_t)y);
     W32(MENU_HAND_X, (uint32_t)x); W32(MENU_HAND_Y, (uint32_t)y);
     *dx = *dy = 0;
+}
+
+// High scores: the game's InsertScore(entry by value, mode) at 0x425798 files a new entry into its local table
+// (SCORES.CFG). The wrapper (recomp_config.json "wraps") reports it to the page, which submits it to the online
+// scoreboard. Entry: score, ?, stage index, name[16]. Mode: 0 Arcade, 1 PC Mode, 2-6 Boss Mode tables.
+// Online both clients run this; only the host reports, so a co-op game counts once.
+void f_425798(void);
+void host_insert_score(void) {
+    uint32_t e = R.esp + 4, mode = R32(R.esp + 0x20);
+    uint32_t score = R32(e), stage = R32(e + 8);
+    char name[17];
+    memcpy(name, G + e + 12, 16); name[16] = 0;
+    for (int i = 0; name[i]; i++) if ((unsigned char)name[i] < 32 || (unsigned char)name[i] > 126) name[i] = '?';
+    host_log("high score: mode %u, %u points, stage %u, '%s'\n", mode, score, stage + 1, name);
+#ifdef __EMSCRIPTEN__
+    if (net_mode == NET_OFF || net_mode == NET_HOST)
+        EM_ASM({ if (Module.onHighScore) Module.onHighScore($0, $1, $2, UTF8ToString($3)); }, mode, score, stage + 1, name);
+#endif
+    f_425798();
+}
+
+// When the player is hit or dies, the game stops drawing the world and draws only the falling character over the
+// last frame without clearing: the software renderer's motion blur (the smear is the original look). With
+// PORT_CLEAR_FRAMES=1 (web: ?PORT_CLEAR_FRAMES=1) the first lock of each frame, the renderer's flush at 0x566224,
+// clears the back buffer instead (ddraw.c): no trails, but a black background during those moments.
+#define FLUSH_LOCK_RET 0x00566224u
+int port_clear_on_lock(uint32_t ret_addr) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("PORT_CLEAR_FRAMES"); on = e && *e == '1'; }
+    return on && ret_addr == FLUSH_LOCK_RET;
 }
 
 // after every presented frame (ddraw.c)

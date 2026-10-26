@@ -12,3 +12,8 @@ Module.preRun.push(function () {
     removeRunDependency('idbfs-load');
   });
 });
+
+// PORT_* switches (src/*.c getenv) from the page address, e.g. ?PORT_CLEAR_FRAMES=1 or ?PORT_DDLOG=1
+Module.preRun.push(function () {
+  new URLSearchParams(location.search).forEach(function (v, k) { if (/^PORT_[A-Z_]+$/.test(k)) ENV[k] = v; });
+});

@@ -49,6 +49,7 @@ static int npal;
 static uint32_t vt_dd, vt_dd2, vt_surf, vt_pal, vt_clip;
 static uint32_t dd_obj, dd2_obj;
 static int primary_id = -1;
+static int locked_since_present;   // the back buffer was locked since the last presented frame
 
 static int ddlog = -1;
 #define DDLOG(...) do { if (ddlog < 0) ddlog = getenv("PORT_DDLOG") != NULL; if (ddlog) host_log(__VA_ARGS__); } while (0)
@@ -167,6 +168,7 @@ static void present(void) {
     }
     SDL_RenderPresent(ren);
     frames++;
+    locked_since_present = 0;
 #ifndef __EMSCRIPTEN__
     // A DDFLIP_WAIT flip waits for the vertical blank: the game caps itself at 1024 fps and relies on that for
     // pacing (its texture cache treats frames with the same millisecond timestamp as one frame). 60 Hz here;
@@ -419,6 +421,20 @@ static void s_Lock(void) {
     uint32_t r = ARG(1), d = ARG(2);
     write_desc(d, s);
     DDLOG("Lock #%d rect %08x\n", si, r);
+    // Software 3D scenes are never cleared: the world covers the screen, but polygons dropped at the near plane
+    // (the camera inside a dying character) leave holes that keep older frames, a smear. game.c names the lock
+    // that starts a frame's drawing; the back buffer is cleared to the darkest palette colour first.
+    {
+        extern int port_clear_on_lock(uint32_t ret_addr);
+        if (!locked_since_present && s->bpp == 8 && !r && !(s->caps & 0x200) && port_clear_on_lock(R32(R.esp))) {
+            uint32_t *pal = pal_rgb[s->palette ? R32(s->palette + 4) & 63 : 0];
+            int best = 0, bv = 1 << 30;
+            for (int k = 0; k < 256; k++) { int v = (pal[k] >> 16) + ((pal[k] >> 8) & 255) + (pal[k] & 255); if (v < bv) { bv = v; best = k; } }
+            COW(s->bits, (uint32_t)(s->pitch * s->h));
+            memset(G + s->bits, best, (size_t)s->pitch * s->h);
+        }
+        locked_since_present = 1;
+    }
     if (r) W32(d + 36, s->bits + R32(r + 4) * s->pitch + R32(r) * (s->bpp / 8));
     s->locked = 1;
     SRET(0, 5);

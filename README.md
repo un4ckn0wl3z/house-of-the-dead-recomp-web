@@ -86,6 +86,17 @@ automatic, but `recomp_config.json` names a few addresses of the tested builds.
 Accounts live in `server/data/hotd.db` (SQLite; git-ignored): scrypt-hashed passwords, random session tokens
 and a games-played counter. `node server/adduser.js <name> <password>` creates an account without the form.
 
+### Scoreboard and rooms
+
+- **Online scoreboard:** when the game files a new high score in its own ranking, a signed-in player's score goes
+  to the server too (a score made while signed out is sent after the next sign-in). The start page shows the top
+  20, one entry per player: Arcade and PC Mode by points, each Boss Mode table (Chariot, Hangedman, Hermit,
+  Magician, All Bosses) by clear time. In co-op only the host submits, so a game counts once. Scores are trusted
+  as far as a signed-in browser is (bounds and a rate limit, no replay check).
+- **Rooms:** the host has **Close room**, P2 has **Leave**. Your own rooms show **Close** in the open games list
+  (for a room left open in a closed tab), hosting a new room closes your previous one, and a player whose
+  connection dies silently is dropped after 60 seconds (heartbeat), which closes their room.
+
 ## How it works
 
 - `tools/cap_export.py` — a capstone-based analysis of the Watcom-built exe (recursive descent from the entry
@@ -109,12 +120,19 @@ and a games-played counter. `node server/adduser.js <name> <password>` creates a
 | `PORT_NET_TEST=1 PORT_NET_RECORD=a.rec` | run as a co-op host with the virtual clock, log checksums, record bundles |
 | `PORT_NET_REPLAY=a.rec PORT_NET_VIEW=1` | replay them as P2 and report any desync |
 | `PORT_CONTROLS=original` | keep the game's own control settings instead of the two light guns |
+| `PORT_CLEAR_FRAMES=1` | clear the screen every frame: no motion-blur trails when you are hit (see below) |
 | `PORT_DDLOG=1` | log DirectDraw calls |
 | `PORT_TRACE=trace.txt` | with `port.py native --trace`: first frame and call count of every guest function |
 
 `port.log` records every shim's first use and any unimplemented call. `tools/dev/` has small helpers
 (disassembly, cross references, gdb hit tracing) and `tools/ghidra/DecompileAll.java` writes a Ghidra
 decompilation to `build/analysis/decomp.c` for reading.
+
+On the web, any of these can be given in the page address, e.g. `https://…/?PORT_CLEAR_FRAMES=1`.
+
+**The smear when you are hit or killed** is the original game's software renderer: it stops drawing the world and
+draws the falling character over the frozen last frame without clearing it, a cheap motion blur. The port keeps
+that look; `PORT_CLEAR_FRAMES=1` clears instead (no trails, but a black background during those moments).
 
 ## Status (verified 2026-10-26)
 
